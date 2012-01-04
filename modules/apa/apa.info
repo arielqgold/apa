@@ -1,0 +1,4 @@
+name = Answer Phoenix Alerts
+description = Answer Phoenix Alerts Custom Module
+core = 7.x
+

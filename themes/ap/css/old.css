@@ -1,0 +1,33 @@
+body.node-type-answer-phoenix-alerts div.form-item-title,
+body.node-type-answer-phoenix-alerts div.tabledrag-toggle-weight-wrapper,
+body.node-type-answer-phoenix-alerts td.field-multiple-drag,
+#breadcrumb,
+div.vertical-tabs,
+body.page-admin-content fieldset#edit-filters.form-wrapper, 
+body.page-admin-content fieldset#edit-options.container-inline.form-wrapper,
+#name-and-slogan, 
+#secondary-menu,
+body.front div.region-content {
+  display:none;
+}
+
+body.node-type-answer-phoenix-alerts #edit-submit {
+  font-size: 1.5em;
+}
+
+body.node-type-answer-phoenix-alerts input.form-text, 
+body.node-type-answer-phoenix-alerts textarea.form-textarea, 
+body.node-type-answer-phoenix-alerts select.form-select, 
+body.node-type-answer-phoenix-alerts label {
+  float: left;
+  margin: 0 3px;
+}
+
+
+#block-system-user-menu li {
+  float:left;
+}
+
+.active-trail, .active {
+ text-decoration: underline;
+}

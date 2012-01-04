@@ -1,0 +1,400 @@
+<?php
+
+
+/* Implements hook_user_login()
+ * 
+ * When a new user is created, the Rules modules is setup to create an "Alert List" with the same
+ * name as the new user. 
+ * When an "alert manager" logs in, this function changes the author of the "Alert List" with matching
+ * name so that the "alert manager" has permission to edit that list. Finally, the "alert manager" is
+ * redirected  to edit that list.
+ */
+function apa_user_login(&$edit, $account) {
+  // Load node with same title as username
+  if (in_array('alert manager', array_values($account->roles))) {
+    $query = new EntityFieldQuery;
+    $result = $query
+      ->entityCondition('entity_type', 'node')
+      ->propertyCondition('title', $account->name)
+      ->execute();
+
+    if (!empty($result['node'])) {
+      $nodes = node_load_multiple(array_keys($result['node']));
+      foreach ($nodes as $node) {
+        // changes author
+   //     $node->uid = $account->uid;
+     //   node_save($node);  
+      }
+    }
+    // Redirect to edit
+    $_GET['destination'] = 'node/' . $node->nid . '/edit';
+    // must unset destination for drupal_goto to work here
+  /*  drupal_set_message('<pre>' . print_r($_REQUEST['destination'], true) . ' break </pre>');
+    $_REQUEST['destination'] = 'node/9/edit';
+
+    drupal_set_message('<pre>' . print_r($_REQUEST['destination'], true) . ' 2 </pre>');
+    drupal_set_message('<pre>' . print_r($_REQUEST['edit']['destination'], true) . '</pre>');
+    //unset($_REQUEST['destination'], $_REQUEST['edit']['destination']);
+    drupal_goto('node/9/edit');
+  */
+   // Create link in primary menu for My alerts
+  }
+}
+
+
+
+
+/* Implements hook_node_update 
+ * When Action Alert List is Saved, write phone numbers to file and upload via ftp 
+ */
+
+function apa_node_update($node) {
+  apa_ftp($node);
+
+}
+/*
+function apa_node_delete($node) {
+  apa_ftp($node);
+}
+*/
+
+function apa_ftp($node) {
+  $result = db_query('SELECT field_phone_value, n.entity_id FROM field_data_field_phone f, field_revision_field_list n WHERE n.field_list_value = f.entity_id AND n.entity_id = :nid', array(':nid' => $node->nid)); 
+  foreach ($result as $record) {
+      str_replace('-', "", $record->field_phone_value) . ';';
+      $phone_numbers .= str_replace('-', "", $record->field_phone_value) . ';';
+  }
+  // remove last semi-colon
+  $phone_numbers = substr($phone_numbers,0,-1);   
+  $file = $node->title . '.txt';
+  $src_file = "/tmp/$file";
+  file_put_contents($src_file, $phone_numbers);
+
+$ftp_server = 'localhost';
+$ftp_user_name = 'user';
+$ftp_user_pass = 'password';
+$destination_file = '/path/' .$file;
+
+  // set up basic connection
+$conn_id = ftp_connect($ftp_server); 
+
+// login with username and password
+$login_result = ftp_login($conn_id, $ftp_user_name, $ftp_user_pass); 
+
+// check connection
+if ((!$conn_id) || (!$login_result)) { 
+   // echo "FTP connection has failed!";
+   // echo "Attempted to connect to $ftp_server for user $ftp_user_name"; 
+    exit; 
+} else {
+   // echo "Connected to $ftp_server, for user $ftp_user_name";
+}
+
+// upload the file
+$upload = ftp_put($conn_id, $destination_file, $src_file, FTP_BINARY); 
+
+// check upload status
+if (!$upload) { 
+   // echo "FTP upload has failed!";
+} else {
+   // echo "Uploaded $source_file to $ftp_server as $destination_file";
+}
+
+// close the FTP stream 
+ftp_close($conn_id); 
+
+}
+
+
+function apa_menu() {
+ 
+ $items['node/%/import'] = array(
+      'page callback' => 'apa_import',
+      //'access callback' => TRUE, 
+      'title' => 'Import',
+      'weight' => 5,
+      'type' => MENU_LOCAL_TASK,
+      'expanded' => TRUE,
+      'context' => MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE,
+      //'page arguments' => array(1),
+      //'file' => 'node_export.pages.inc',
+      'access callback' => 'apa_access',
+      //'access arguments' => array(1),
+      
+    );
+  
+  $items['node/import/file'] = array(
+    'title' => 'Import', 
+    'page callback' => 'apa_import_file', 
+    'access callback' => TRUE, 
+    'expanded' => TRUE,
+  );
+
+  return $items;
+
+}
+
+function apa_import() {
+  return drupal_get_form('apa_import_form');
+}
+
+function apa_import_form($form, &$form_state) {
+  //$form = array('#attributes' => array('enctype' => 'multipart/form-data'));
+  $form['csvfile'] = array(
+        '#type' => 'file',
+        '#title' => t('Choose file'),
+        '#size' => 48,
+        '#description' => t('CSV file from your computer to upload.'),
+        //'#required' => TRUE,
+    );
+    $form['submit'] = array(
+          '#type' => 'submit',
+          '#value' => 'Upload',
+    );
+    $form_state['redirect'] = 'node';
+    return $form;
+
+}
+
+function apa_import_form_submit($form, &$form_state) {
+  // create a csv upload directory in sites/%/files
+  $filepath = 'public://csv';
+  file_prepare_directory($filepath, FILE_CREATE_DIRECTORY);
+
+  // save the uploaded file
+  $file = file_save_upload('csvfile', array('file_validate_extensions' => array('CSV')), $filepath, FILE_EXISTS_REPLACE);
+  drupal_set_message('The file '.print_r($file->filename, TRUE).' has been uploaded.');
+
+  $nid = explode("/", $form['#action']);
+  $query = "SELECT delta from {field_data_field_list} WHERE entity_id = :nid ORDER BY delta DESC limit 1";
+  $result = db_query($query, array(':nid' => $nid[2]));
+   foreach ($result as $row) {
+     $delta = $row->delta + 1;
+   }
+   if (!$delta) {
+    $delta = 0;
+  }
+  // now read from saved file
+  $realpath = drupal_realpath($file->uri);
+  $f = file_get_contents($realpath);
+  $parsed = apa_parse_csv($f);
+  //drupal_set_message("<pre>".print_r($parsed, TRUE)."</pre>");
+  $row = 0;
+  foreach ($parsed as $data) {
+    //if ($row > 0) {
+      $fid = db_insert('field_collection_item')
+           ->fields(array(
+               'field_name' => 'field_list',
+           ))
+           ->execute();
+      db_insert('field_data_field_list')
+           ->fields(array(
+               'entity_type' => 'node',
+               'bundle'      => 'answer_phoenix_alerts',
+               'deleted'     =>  0,
+               'entity_id'   => $nid[2],
+               'revision_id' => $nid[2],
+               'language'    => 'und',
+               'delta'       => $delta,
+               'field_list_value' => $fid,
+           ))
+           ->execute();
+      db_insert('field_data_field_first')
+             ->fields(array(
+                 'entity_type' => 'field_collection_item',
+                 'bundle'      => 'field_list',
+                 'deleted'     =>  0,
+                 'entity_id'   => $fid,
+                 'revision_id' => $fid,
+                 'language'    => 'und',
+                 'delta'       => 0,
+                 'field_first_value' => $data[1],
+                 'field_first_format' => NULL,
+           ))
+           ->execute();
+      db_insert('field_data_field_last')
+             ->fields(array(
+                 'entity_type' => 'field_collection_item',
+                 'bundle'      => 'field_list',
+                 'deleted'     =>  0,
+                 'entity_id'   => $fid,
+                 'revision_id' => $fid,
+                 'language'    => 'und',
+                 'delta'       => 0,
+                 'field_last_value' => $data[0],
+                 'field_last_format' => NULL,
+           ))
+           ->execute();
+      db_insert('field_data_field_phone')
+             ->fields(array(
+                 'entity_type' => 'field_collection_item',
+                 'bundle'      => 'field_list',
+                 'deleted'     =>  0,
+                 'entity_id'   => $fid,
+                 'revision_id' => $fid,
+                 'language'    => 'und',
+                 'delta'       => 0,
+                 'field_phone_value' => $data[2],
+           ))
+           ->execute();
+      db_insert('field_data_field_refnum')
+             ->fields(array(
+                 'entity_type' => 'field_collection_item',
+                 'bundle'      => 'field_list',
+                 'deleted'     =>  0,
+                 'entity_id'   => $fid,
+                 'revision_id' => $fid,
+                 'language'    => 'und',
+                 'delta'       => 0,
+                 'field_refnum_value' => $data[3],
+                 'field_refnum_format' => NULL,
+           ))
+           ->execute();
+      $delta = $delta + 1;
+      //$row = $row + 1;
+   // }
+  }
+  drupal_flush_all_caches();
+}
+
+function apa_export_file() {
+  header('Content-type: text/plain');
+  header("Content-Disposition: attachment; filename=\"my-data.csv\"");
+  $data="col1, col start and end col2,col3, \n";
+  $data .= "seond linedata here from site to download col1";  
+  print($data); 
+  module_invoke_all('exit');
+  exit;
+}
+
+// give proper access to node 
+function apa_node_access($node, $op, $account) {
+  // We are interested to existing objects. When the node is being created, Drupal passed the node type instead of the node object. 
+  if (is_object($node)) {
+    $bool = (
+      (($op == 'view') || ($op == 'update'))
+    );
+    if ($bool) {
+      if ($account->uid == $node->uid) {
+        return NODE_ACCESS_ALLOW;
+      }
+      else {
+        return NODE_ACCESS_DENY;
+      }
+    }
+  }
+
+  return NODE_ACCESS_IGNORE;
+}
+
+function apa_user_insert(&$edit, $account, $category) {
+  $node = new stdClass();
+  $node->language = LANGUAGE_NONE;
+  $node->type = 'answer_phoenix_alerts';  // [1]
+  node_object_prepare($node);
+
+
+  $node->title    = $account->name;
+  $node->uid      = $account->uid;
+
+  $path = $account->name;
+  $node->path = array('alias' => $path);
+
+  node_save($node);
+
+
+        $item = array(
+          'link_path' => 'node/' . $node->nid . '/edit',
+          'link_title' => 'Edit Alerts',
+          'menu_name' => 'user-menu',
+        );
+        menu_link_save($item);
+ 
+}
+
+
+
+function apa_fields_field_info() {
+  return array(
+    'apa_fields_fname' => array(
+      'label' => t('D&amp;D First Name'),
+      'description' => t("First Name"),
+      'settings' => array('allowed_values' => array(), 'allowed_values_function' => ''),
+      'default_widget' => 'apa_fields_fname',
+      'default_formatter' => 'dnd_fields_fname', // This doesn't *have* to be the same name as default_widget's value, this is only coincidence
+    ),
+    'dnd_fields_lname' => array(
+      'label' => t('D&amp;D Last Name'),
+      'description' => t("Last Name"),
+      'settings' => array('allowed_values' => array(), 'allowed_values_function' => ''),
+      'default_widget' => 'apa_fields_lname',
+      'default_formatter' => 'apa_fields_lname',
+    ),
+ 
+  );
+}
+function apa_parse_csv($file,$comma=',',$quote='"',$newline="\n") {
+   
+    $db_quote = $quote . $quote;
+   
+    // Clean up file
+    $file = trim($file);
+    $file = str_replace("\r\n",$newline,$file);
+   
+    $file = str_replace($db_quote,'&quot;',$file); // replace double quotes with &quot; HTML entities
+    $file = str_replace(',&quot;,',',,',$file); // handle ,"", empty cells correctly
+ 
+    $file .= $comma; // Put a comma on the end, so we parse last cell 
+ 
+     
+    $inquotes = false;
+    $start_point = 0;
+    $row = 0;
+   
+    for($i=0; $i<strlen($file); $i++) {
+       
+        $char = $file[$i];
+        if ($char == $quote) {
+            if ($inquotes) {
+                $inquotes = false;
+                }
+            else {
+                $inquotes = true;
+                }
+            }       
+       
+        if (($char == $comma or $char == $newline) and !$inquotes) {
+            $cell = substr($file,$start_point,$i-$start_point);
+            $cell = str_replace($quote,'',$cell); // Remove delimiter quotes
+            $cell = str_replace('&quot;',$quote,$cell); // Add in data quotes
+            $data[$row][] = $cell;
+            $start_point = $i + 1;
+            if ($char == $newline) {
+                $row++;
+                }
+            }
+        }
+    return $data;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function apa_permission() {
+  return array(
+    'use import' => array(
+      'title' => t('use import'),
+      'description' => t('Import csv file into alet list'),
+    ),
+  );  
+}
+
+/**
+ * Menu access callback.
+ */
+function apa_access() {
+  if (user_access('use import')) {
+    return TRUE;
+  }
+  return FALSE;
+}
